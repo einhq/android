@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Ein" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/ein_accent</item>
+        <item name="colorOnPrimary">@color/ein_on_accent</item>
+        <item name="android:colorBackground">@color/ein_body</item>
+        <item name="colorSurface">@color/ein_body</item>
+        <item name="colorOnSurface">@color/ein_text</item>
+        <item name="colorOnSurfaceVariant">@color/ein_text_secondary</item>
+        <item name="android:windowBackground">@color/ein_chrome</item>
+    </style>
+</resources>

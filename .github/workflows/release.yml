@@ -1,0 +1,64 @@
+# A release of the app: on its tag, v<version> as version.json says, which the daily publish pushes
+# to GitHub with the snapshot that holds it, the app is built as an App Bundle for Google Play and as
+# an APK, both signed with the upload key, and attached to the tag's GitHub release. The key is in
+# the repository's secrets, never in the repository: ANDROID_UPLOAD_KEYSTORE, a PKCS #12 keystore in
+# Base64 whose key is `upload`, and ANDROID_UPLOAD_KEYSTORE_PASSWORD. Run by hand on a tag, it
+# builds that release again and replaces what is attached.
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+# One release at a time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # GitHub alone releases: a Forgejo that runs this repository's workflows has no use for it.
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: The tag is version.json's
+        run: |
+          version=$(jq -r .version version.json)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "no release version in version.json: $version"; exit 1; }
+          [ "$GITHUB_REF" = "refs/tags/v$version" ] || { echo "$GITHUB_REF is not the release tag v$version"; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Build, signed with the upload key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+          EIN_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [ -n "$KEYSTORE" ] && [ -n "$EIN_UPLOAD_KEYSTORE_PASSWORD" ] || { echo "::error::the upload key's secrets are not set"; exit 1; }
+          export EIN_UPLOAD_KEYSTORE="$RUNNER_TEMP/upload.p12"
+          printf '%s' "$KEYSTORE" | base64 -d >"$EIN_UPLOAD_KEYSTORE"
+          ./gradlew --no-daemon bundleRelease assembleRelease
+          rm "$EIN_UPLOAD_KEYSTORE"
+          mkdir -p out
+          cp app/build/outputs/bundle/release/app-release.aab "out/ein-$VERSION.aab"
+          cp app/build/outputs/apk/release/app-release.apk "out/ein-$VERSION.apk"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release view "v$VERSION" >/dev/null 2>&1 ||
+            gh release create "v$VERSION" --verify-tag --title "EiN for Android $VERSION" \
+              --notes "The App Bundle is what Google Play takes; the APK installs on a phone as it is."
+          gh release upload "v$VERSION" out/* --clobber

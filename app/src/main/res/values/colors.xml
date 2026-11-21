@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Web UI's own colours: it is drawn dark only. -->
+<resources>
+    <!-- The header and sidebar, and so the system bars beside them. -->
+    <color name="ein_chrome">#070A10</color>
+    <!-- The page. -->
+    <color name="ein_body">#101217</color>
+    <color name="ein_text">#E8ECF1</color>
+    <color name="ein_text_secondary">#9BA3B0</color>
+    <!-- The accent: links, focus, the main button. -->
+    <color name="ein_accent">#4A90F0</color>
+    <color name="ein_on_accent">#FFFFFF</color>
+</resources>

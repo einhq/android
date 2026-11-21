@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EiN</string>
+
+    <string name="pair_title">Pair with your EiN</string>
+    <string name="pair_body">In EiN on a computer, open Devices and choose this phone, or add it with Create → Device. On its Info tab, choose Pair the app, then scan the QR code it shows.</string>
+    <string name="scan">Scan QR code</string>
+    <string name="back_to_ein">Back to EiN</string>
+    <string name="pairing_with">Pairing with %1$s…</string>
+    <string name="pairing_refused">%1$s did not take the code: %2$s. Choose Pair again on the phone\'s Info tab for a new one.</string>
+    <string name="not_a_pairing_code">That QR code is not an EiN pairing code.</string>
+    <string name="scan_failed">The QR code could not be scanned: %1$s</string>
+
+    <string name="replace_title">Pair this phone again?</string>
+    <string name="replace_body">It is paired with %1$s as %2$s. Pairing with %3$s as %4$s takes its place.</string>
+    <string name="replace">Pair</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="unreachable_title">EiN does not answer</string>
+    <string name="unreachable_body">%1$s could not be reached: %2$s</string>
+    <string name="unreachable_status">%1$s answered %2$d.</string>
+    <string name="refused_title">EiN refused this phone</string>
+    <string name="refused_body">%1$s said: %2$s. If the phone was unpaired, pair it again.</string>
+    <string name="sign_in_failed_title">Signing in did not hold</string>
+    <string name="sign_in_failed">EiN at %1$s asked the app to sign in again as soon as it had.</string>
+    <string name="try_again">Try again</string>
+    <string name="pair_again">Pair again</string>
+
+    <string name="downloading">Downloading %1$s</string>
+    <string name="no_download">A file made in the page cannot be saved here.</string>
+    <string name="no_app_for_link">Nothing on this phone opens %1$s.</string>
+</resources>
