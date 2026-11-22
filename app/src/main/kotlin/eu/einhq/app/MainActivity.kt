@@ -1,17 +1,22 @@
 package eu.einhq.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
@@ -26,7 +31,9 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
@@ -39,16 +46,24 @@ import androidx.webkit.WebResourceErrorCompat
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.work.ExistingWorkPolicy
 import com.google.android.gms.common.moduleinstall.ModuleInstall
 import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import eu.einhq.app.backup.Backup
+import eu.einhq.app.backup.BackupBridge
+import eu.einhq.app.backup.MediaAccess
+import eu.einhq.app.track.LocationAccess
+import eu.einhq.app.track.Tracking
+import eu.einhq.app.track.TrackingBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import kotlin.coroutines.resume
 
 /**
@@ -59,7 +74,10 @@ import kotlin.coroutines.resume
  *
  * Pages of the paired EiN load in the WebView, anything else in the app that opens it, and the
  * Web UI's history is what Back goes through. A screen of the app's own stands in for the page
- * while it is pairing, signing in, or cannot reach EiN.
+ * while it is pairing, signing in, or cannot reach EiN. The photo backup (`backup/`) and the
+ * position reports (`track/`) run without it; the Web UI's App page sets them up through the bridge,
+ * and the activity asks Android for the permissions they need. A page of the paired EiN that asks
+ * for the phone's position gets it once the app may know it.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var store: PairingStore
@@ -69,7 +87,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var screen: View
     private lateinit var fullscreen: FrameLayout
     private val chooser = FileChooser(this)
-    private val bridge = Bridge(pairing = { pairing }, unpair = ::unpair)
+    private val bridge = Bridge(pairing = { pairing }, unpair = ::unpair, featureCall = ::featureCall)
+    private val backup by lazy { BackupBridge(applicationContext) }
+    private val tracking by lazy { TrackingBridge(applicationContext) }
+
+    /** Android's answer to a permission request, for whoever waits for it. */
+    private var permissionsAnswered: (() -> Unit)? = null
+    private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permissionsAnswered?.invoke()
+        permissionsAnswered = null
+    }
+
     /** The origin `window.EinApp` is given to now. */
     private var bridgeOrigin: String? = null
 
@@ -108,15 +136,23 @@ class MainActivity : AppCompatActivity() {
         pairing = store.load()
         setUpWeb()
 
+        // In line with their settings after the app was updated.
+        if (pairing != null) {
+            Backup.schedule(this, restart = false)
+            Tracking.apply(this)
+        }
+
         // A link that started the activity is handled once, not again when it is made anew.
         if (savedInstanceState == null && pairingLinkIn(intent)) return
-        val path = savedInstanceState?.getString(STATE_PATH) ?: "/"
+        val path = savedInstanceState?.getString(STATE_PATH) ?: intent.getStringExtra(EXTRA_PATH) ?: "/"
         if (pairing != null) open(path) else askToPair(null)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        pairingLinkIn(intent)
+        if (pairingLinkIn(intent)) return
+        val path = intent.getStringExtra(EXTRA_PATH)
+        if (path != null && pairing != null) open(path)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -207,10 +243,18 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             when (val answer = withContext(Dispatchers.IO) { Endpoints.pair(link) }) {
                 is Answer.Done -> {
-                    forget()
-                    store.save(answer.value)
-                    pairing = answer.value
+                    val paired = answer.value
+                    // The same phone paired again as the same account keeps its photo backup and position reports.
+                    val same = pairing?.let { it.server == paired.server && it.device == paired.device && it.user == paired.user } == true
+                    forget(keepFeatures = same)
+                    store.save(paired)
+                    pairing = paired
                     signIn("/")
+                    if (same) {
+                        Backup.schedule(this@MainActivity, restart = false)
+                        Tracking.apply(this@MainActivity)
+                        Tracking.send(this@MainActivity, ExistingWorkPolicy.REPLACE)
+                    }
                 }
                 is Answer.Refused -> askToPair(getString(R.string.pairing_refused, hostOf(link.server), answer.reason))
                 is Answer.Unreachable -> askToPair(getString(R.string.unreachable_body, hostOf(link.server), answer.reason))
@@ -237,14 +281,108 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Forget the pairing and everything signed in with it: its cookies, the page and its history. */
-    private fun forget() {
+    /**
+     * Forget the pairing and everything signed in with it: its cookies, the page and its history, and,
+     * unless `keepFeatures`, the photo backup and the position reports.
+     */
+    private fun forget(keepFeatures: Boolean = false) {
+        if (!keepFeatures) {
+            Backup.forget(this)
+            Tracking.forget(this)
+        }
         store.clear()
         pairing = null
         CookieManager.getInstance().removeAllCookies(null)
         web.loadUrl("about:blank")
         web.clearHistory()
         updateBridge()
+    }
+
+    // --- The photo backup and the position reports ---
+
+    /** Do a method of the bridge's for the photo backup or the position reports off the main thread, and answer on it. */
+    private fun featureCall(method: String, params: JSONObject, answered: (Result<JSONObject>) -> Unit) {
+        lifecycleScope.launch {
+            answered(
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        if (method in TrackingBridge.METHODS) tracking.call(method, params, ::askTrackingPermissions) else backup.call(method, params, ::askBackupPermissions)
+                    }
+                },
+            )
+        }
+    }
+
+    /** Ask Android for `permissions`, and return once the phone's owner has answered; at once while another such question is open. */
+    private suspend fun ask(permissions: Array<String>) = withContext(Dispatchers.Main) {
+        if (permissionsAnswered != null) return@withContext
+        suspendCancellableCoroutine { done ->
+            permissionsAnswered = { done.resume(Unit) }
+            askPermissions.launch(permissions)
+        }
+    }
+
+    /** Whether `permission` was asked for before and Android will not ask again: only the phone's settings can grant it now. */
+    private fun refusedForGood(permission: String): Boolean =
+        getSharedPreferences("asked", MODE_PRIVATE).getBoolean(permission, false) && !shouldShowRequestPermissionRationale(permission)
+
+    private fun markAsked(permission: String) = getSharedPreferences("asked", MODE_PRIVATE).edit { putBoolean(permission, true) }
+
+    private fun openAppSettings() =
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+
+    /**
+     * Ask for what the backup needs, and return once Android has answered. Once the photos have been
+     * refused for good, Android asks no more, so the app's page in the phone's settings opens instead.
+     */
+    private suspend fun askBackupPermissions() = withContext(Dispatchers.Main) {
+        val photos = Backup.photosPermission()
+        if (Backup.mediaAccess(this@MainActivity) == MediaAccess.NONE && refusedForGood(photos)) return@withContext openAppSettings()
+        markAsked(photos)
+        ask(Backup.wantedPermissions())
+    }
+
+    /**
+     * Ask for what the position reports need, in Android's two steps: the position while the app is
+     * in use, with how the phone moves and a notification; then, once the app has said why, the
+     * position all the time, which Android asks on a page of the phone's settings. Once one of them
+     * was refused for good, the app's page in the phone's settings opens instead.
+     */
+    private suspend fun askTrackingPermissions() = withContext(Dispatchers.Main) {
+        val fine = Manifest.permission.ACCESS_FINE_LOCATION
+        if (Tracking.access(this@MainActivity) == LocationAccess.NONE && refusedForGood(fine)) return@withContext openAppSettings()
+        val wanted = Tracking.foregroundPermissions()
+        if (wanted.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
+            markAsked(fine)
+            ask(wanted)
+        }
+        if (Tracking.access(this@MainActivity) != LocationAccess.IN_USE || !discloseBackgroundLocation()) return@withContext
+        val background = Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        if (refusedForGood(background)) return@withContext openAppSettings()
+        markAsked(background)
+        ask(arrayOf(background))
+    }
+
+    /**
+     * Say what the app does with the position all the time before Android asks for it, as Google
+     * Play requires; whether the phone's owner chose to go on.
+     */
+    private suspend fun discloseBackgroundLocation(): Boolean = suspendCancellableCoroutine { done ->
+        val option = if (Build.VERSION.SDK_INT >= 30) packageManager.backgroundPermissionOptionLabel else getString(R.string.allow_all_the_time)
+        var answered = false
+        val answer = { yes: Boolean ->
+            if (!answered) {
+                answered = true
+                done.resume(yes)
+            }
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.tracking_disclosure_title)
+            .setMessage(getString(R.string.tracking_disclosure_body, hostOf(pairing?.server.orEmpty()), option))
+            .setPositiveButton(R.string.go_on) { _, _ -> answer(true) }
+            .setNegativeButton(R.string.not_now) { _, _ -> answer(false) }
+            .setOnDismissListener { answer(false) }
+            .show()
     }
 
     // --- Signing in ---
@@ -468,6 +606,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class Chrome : WebChromeClient() {
+        /** A page of the paired EiN may know where the phone is, once the app may; any other page may not. */
+        override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+            val paired = pairing
+            if (paired == null || originOf(origin) != paired.server) return callback.invoke(origin, false, false)
+            if (Tracking.access(this@MainActivity) != LocationAccess.NONE) return callback.invoke(origin, true, false)
+            lifecycleScope.launch {
+                ask(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                callback.invoke(origin, Tracking.access(this@MainActivity) != LocationAccess.NONE, false)
+            }
+        }
+
         override fun onShowFileChooser(webView: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean =
             chooser.open(callback, params)
 
@@ -489,12 +638,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private companion object {
-        const val STATE_PATH = "path"
-        /** How soon after a new session the Web UI asking to sign in again means the session does not hold. */
-        const val RETRADE_MS = 15_000L
-        val GATEWAY_ERRORS = setOf(502, 503, 504)
+    companion object {
+        /** A path of the paired EiN to open, for an intent from the app's own notification. */
+        const val EXTRA_PATH = "eu.einhq.app.PATH"
 
-        fun hostOf(server: String): String = server.toUri().authority ?: server
+        private const val STATE_PATH = "path"
+        /** How soon after a new session the Web UI asking to sign in again means the session does not hold. */
+        private const val RETRADE_MS = 15_000L
+        private val GATEWAY_ERRORS = setOf(502, 503, 504)
+
+        private fun hostOf(server: String): String = server.toUri().authority ?: server
     }
 }

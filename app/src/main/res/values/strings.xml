@@ -26,6 +26,21 @@
     <string name="try_again">Try again</string>
     <string name="pair_again">Pair again</string>
 
+    <string name="backup_channel">Photo backup</string>
+    <string name="backup_channel_description">While the app sends the phone\'s photos and videos to EiN</string>
+    <string name="backup_sending">Backing up to EiN: %1$d of %2$d</string>
+
+    <string name="tracking_channel">Position reports</string>
+    <string name="tracking_channel_description">While the app reports the phone\'s position to EiN</string>
+    <string name="tracking_on">Reporting this phone\'s position to EiN</string>
+    <string name="tracking_moving">Following the phone as it moves</string>
+    <string name="tracking_still">Paused while the phone lies still</string>
+    <string name="tracking_disclosure_title">Report your position all the time?</string>
+    <string name="tracking_disclosure_body">While position reports are on, the EiN app collects this phone\'s location and sends it to the phone\'s track on your EiN at %1$s, also when the app is closed or not in use. It is sent nowhere else. On the next page, choose \"%2$s\".</string>
+    <string name="allow_all_the_time">Allow all the time</string>
+    <string name="go_on">Continue</string>
+    <string name="not_now">Not now</string>
+
     <string name="downloading">Downloading %1$s</string>
     <string name="no_download">A file made in the page cannot be saved here.</string>
     <string name="no_app_for_link">Nothing on this phone opens %1$s.</string>

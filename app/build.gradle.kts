@@ -71,8 +71,11 @@ dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.material)
+    implementation(libs.okhttp)
     implementation(libs.play.services.code.scanner)
+    implementation(libs.play.services.location)
     testImplementation(libs.junit)
 }

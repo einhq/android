@@ -4,6 +4,30 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- The photo backup: the phone's photos and videos (all, or those picked on Android 14 and
+         later), where they were taken, which Android otherwise takes out of what an app reads, and
+         a notification while it sends, from a foreground service of the dataSync type. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- The position reports: the phone's position, also while the app is closed, from a foreground
+         service of the location type; how it moves, to pause while it lies still; and going on
+         after the phone starts. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- The cameras a file chooser offers beside the files. -->
     <queries>
         <intent>
@@ -51,6 +75,29 @@
                     android:scheme="ein" />
             </intent-filter>
         </activity>
+
+        <!-- The photo backup's worker, while it sends, runs in WorkManager's foreground service. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- The position reports, while they are on. -->
+        <service
+            android:name=".track.TrackingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <!-- Activity recognition's word that the phone moves or lies still, and the phone having
+             started or the app been updated. -->
+        <receiver
+            android:name=".track.TrackingReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Where a camera opened from a file chooser writes its photo or video. -->
         <provider
