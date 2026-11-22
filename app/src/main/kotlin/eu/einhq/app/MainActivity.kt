@@ -15,6 +15,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.RenderProcessGoneDetail
@@ -33,6 +35,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.edit
 import androidx.core.content.getSystemService
@@ -52,6 +55,8 @@ import androidx.work.ExistingWorkPolicy
 import com.google.android.gms.common.moduleinstall.ModuleInstall
 import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -70,9 +75,10 @@ import kotlin.coroutines.resume
 
 /**
  * The app: EiN's Web UI in a WebView, signed in with the token the app was paired with, never a
- * password. Unpaired, it asks for the QR code on the phone's Info tab in EiN, scanned here or with
- * the camera (`ein://pair?…`). Whenever the Web UI goes to its sign-in page, the app trades the
- * token for a new session instead; EiN refusing the token asks for a new pairing.
+ * password. Unpaired, it asks for EiN's address, a username and a password, which it signs in with
+ * once to be paired, or for the QR code on the phone's Info tab in EiN, scanned here or with the
+ * camera (`ein://pair?…`). Whenever the Web UI goes to its sign-in page, the app trades the token
+ * for a new session instead; EiN refusing the token asks for a new pairing.
  *
  * Pages of the paired EiN load in the WebView, anything else in the app that opens it, and the
  * Web UI's history is what Back goes through. A screen of the app's own stands in for the page
@@ -102,6 +108,10 @@ class MainActivity : AppCompatActivity() {
         permissionsAnswered?.invoke()
         permissionsAnswered = null
     }
+
+    /** What was last typed to sign in with, but the password, to start from when asked again. */
+    private var typedAddress: String? = null
+    private var typedUser: String? = null
 
     /** The origin `window.EinApp` is given to now. */
     private var bridgeOrigin: String? = null
@@ -220,8 +230,76 @@ class MainActivity : AppCompatActivity() {
             title = getString(R.string.pair_title),
             body = listOfNotNull(problem, getString(R.string.pair_body)).joinToString("\n\n"),
             primary = getString(R.string.scan) to ::scan,
-            secondary = if (paired != null) getString(R.string.back_to_ein) to { open("/") } else null,
+            secondary = getString(R.string.sign_in_with_password) to ::askSignIn,
+            tertiary = if (paired != null) getString(R.string.back_to_ein) to { open("/") } else null,
         )
+    }
+
+    /** Ask for EiN's address, a username and a password, and sign in with them. */
+    private fun askSignIn() {
+        val form = layoutInflater.inflate(R.layout.sign_in, null)
+        val addressLayout = form.findViewById<TextInputLayout>(R.id.address_layout)
+        val userLayout = form.findViewById<TextInputLayout>(R.id.user_layout)
+        val address = form.findViewById<TextInputEditText>(R.id.address)
+        val user = form.findViewById<TextInputEditText>(R.id.user)
+        val password = form.findViewById<TextInputEditText>(R.id.password)
+        address.setText(typedAddress ?: pairing?.server?.let(::hostOf))
+        user.setText(typedUser ?: pairing?.user)
+        (if (address.text.isNullOrEmpty()) address else if (user.text.isNullOrEmpty()) user else password).requestFocus()
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.sign_in_title)
+            .setView(form)
+            .setPositiveButton(R.string.sign_in, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        val submit = submit@{
+            val server = serverOf(address.text.toString())
+            addressLayout.error = if (server == null) getString(R.string.not_an_address) else null
+            userLayout.error = if (user.text.isNullOrBlank()) getString(R.string.no_username) else null
+            if (server == null || user.text.isNullOrBlank()) return@submit
+            typedAddress = address.text.toString().trim()
+            typedUser = user.text.toString().trim()
+            dialog.dismiss()
+            signInWithPassword(Account(server, typedUser!!, password.text.toString()))
+        }
+        password.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_DONE).also { if (it) submit() } }
+        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { submit() } }
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dialog.show()
+    }
+
+    /**
+     * Sign in with `account`'s password and pair as the phone EiN finds for this installation, the
+     * phone `device`, or a new one (`create`); asked which when EiN cannot tell.
+     */
+    private fun signInWithPassword(account: Account, device: String? = null, create: Boolean = false) {
+        showScreen(body = getString(R.string.signing_in_to, hostOf(account.server)), busy = true)
+        lifecycleScope.launch {
+            when (val answer = withContext(Dispatchers.IO) { Endpoints.signIn(account, ThisPhone.of(this@MainActivity), device, create) }) {
+                is Answer.Done -> when (val signedIn = answer.value) {
+                    is SignedIn.Paired -> paired(signedIn.pairing)
+                    is SignedIn.Choose -> choosePhone(account, signedIn)
+                }
+                is Answer.Refused -> askToPair(getString(R.string.sign_in_refused, hostOf(account.server), answer.reason))
+                is Answer.Unreachable -> askToPair(getString(R.string.unreachable_body, hostOf(account.server), answer.reason))
+            }
+        }
+    }
+
+    /** Ask which of `choice`'s phones this is, or whether it is a new one, and sign in again as it. */
+    private fun choosePhone(account: Account, choice: SignedIn.Choose) {
+        val phones = choice.phones.map { if (it.paired) getString(R.string.phone_paired_now, it.label) else it.label }
+        val options = phones + if (choice.create) listOf(getString(R.string.new_phone, choice.label)) else emptyList()
+        if (options.isEmpty()) return askToPair(getString(R.string.no_phone_to_pair, account.user, hostOf(account.server)))
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.which_phone)
+            .setItems(options.toTypedArray()) { _, which ->
+                val phone = choice.phones.getOrNull(which)
+                if (phone != null) signInWithPassword(account, device = phone.device) else signInWithPassword(account, create = true)
+            }
+            .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
+            .setOnCancelListener { askToPair(null) }
+            .show()
     }
 
     private fun scan() {
@@ -258,24 +336,26 @@ class MainActivity : AppCompatActivity() {
     private fun pair(link: PairingLink) {
         showScreen(body = getString(R.string.pairing_with, hostOf(link.server)), busy = true)
         lifecycleScope.launch {
-            when (val answer = withContext(Dispatchers.IO) { Endpoints.pair(link) }) {
-                is Answer.Done -> {
-                    val paired = answer.value
-                    // The same phone paired again as the same account keeps its photo backup and position reports.
-                    val same = pairing?.let { it.server == paired.server && it.device == paired.device && it.user == paired.user } == true
-                    forget(keepFeatures = same)
-                    store.save(paired)
-                    pairing = paired
-                    signIn(if (shared.isEmpty) "/" else SHARE_PATH)
-                    if (same) {
-                        Backup.schedule(this@MainActivity, restart = false)
-                        Tracking.apply(this@MainActivity)
-                        Tracking.send(this@MainActivity, ExistingWorkPolicy.REPLACE)
-                    }
-                }
+            when (val answer = withContext(Dispatchers.IO) { Endpoints.pair(link, ThisPhone.of(this@MainActivity).install) }) {
+                is Answer.Done -> paired(answer.value)
                 is Answer.Refused -> askToPair(getString(R.string.pairing_refused, hostOf(link.server), answer.reason))
                 is Answer.Unreachable -> askToPair(getString(R.string.unreachable_body, hostOf(link.server), answer.reason))
             }
+        }
+    }
+
+    /** Keep the pairing EiN just gave in place of the one before, and open EiN signed in with it. */
+    private suspend fun paired(paired: Pairing) {
+        // The same phone paired again as the same account keeps its photo backup and position reports.
+        val same = pairing?.let { it.server == paired.server && it.device == paired.device && it.user == paired.user } == true
+        forget(keepFeatures = same)
+        store.save(paired)
+        pairing = paired
+        signIn(if (shared.isEmpty) "/" else SHARE_PATH)
+        if (same) {
+            Backup.schedule(this, restart = false)
+            Tracking.apply(this)
+            Tracking.send(this, ExistingWorkPolicy.REPLACE)
         }
     }
 
@@ -539,13 +619,14 @@ class MainActivity : AppCompatActivity() {
         updateBack()
     }
 
-    /** A screen of the app's own over the page: a title, a text, a spinner while `busy`, and up to two buttons. */
+    /** A screen of the app's own over the page: a title, a text, a spinner while `busy`, and up to three buttons. */
     private fun showScreen(
         title: String? = null,
         body: String? = null,
         busy: Boolean = false,
         primary: Pair<String, () -> Unit>? = null,
         secondary: Pair<String, () -> Unit>? = null,
+        tertiary: Pair<String, () -> Unit>? = null,
     ) {
         findViewById<TextView>(R.id.title).apply {
             text = title
@@ -556,7 +637,7 @@ class MainActivity : AppCompatActivity() {
             isVisible = body != null
         }
         findViewById<View>(R.id.progress).isVisible = busy
-        for ((id, action) in listOf(R.id.primary to primary, R.id.secondary to secondary)) {
+        for ((id, action) in listOf(R.id.primary to primary, R.id.secondary to secondary, R.id.tertiary to tertiary)) {
             findViewById<Button>(id).apply {
                 isVisible = action != null
                 text = action?.first

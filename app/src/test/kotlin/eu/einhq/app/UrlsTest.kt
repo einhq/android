@@ -17,6 +17,16 @@ class UrlsTest {
     }
 
     @Test
+    fun `a typed address is https unless it says otherwise`() {
+        assertEquals("https://ein.example", serverOf(" ein.example "))
+        assertEquals("https://ein.example:8443", serverOf("ein.example:8443/albums"))
+        assertEquals("http://192.168.1.10:8080", serverOf("http://192.168.1.10:8080"))
+        assertEquals("https://ein.example", serverOf("HTTPS://EIN.example/"))
+        assertNull(serverOf(""))
+        assertNull(serverOf("ftp://ein.example"))
+    }
+
+    @Test
     fun `the sign-in page is the paired server's login and nothing else`() {
         assertTrue(isSignInPage("https://ein.example/login?next=%2Falbums", "https://ein.example"))
         assertTrue(isSignInPage("https://ein.example/login", "https://ein.example"))

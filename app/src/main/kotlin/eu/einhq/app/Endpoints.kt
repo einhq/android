@@ -21,6 +21,20 @@ data class Session(val location: String, val cookies: List<String>)
 /** Whether a cookie still signs in, and the `Set-Cookie` headers that renew it. */
 data class SessionCheck(val signedIn: Boolean, val cookies: List<String>)
 
+/** An account to sign in to EiN with, as typed: EiN's origin, a username or e-mail address and its password. */
+data class Account(val server: String, val user: String, val password: String)
+
+/** A phone the account may pair the app with: its name in EiN, what it is called, and whether an app is paired with it now. */
+data class PhoneChoice(val device: String, val label: String, val paired: Boolean)
+
+/** EiN's answer to a sign-in with a password: paired, or which phone to pair as. */
+sealed interface SignedIn {
+    data class Paired(val pairing: Pairing) : SignedIn
+
+    /** The phones the account may pair, whether it may make a new one, and what EiN would call it. */
+    data class Choose(val phones: List<PhoneChoice>, val create: Boolean, val label: String) : SignedIn
+}
+
 /**
  * EiN's endpoints for the app. Each blocks, so it is called off the main thread; the cookies are
  * the WebView's, read and written by the caller.
@@ -29,13 +43,9 @@ object Endpoints {
     private const val TIMEOUT_MS = 15_000
     private val userAgent = "EiN/${BuildConfig.VERSION_NAME} (Android ${Build.VERSION.RELEASE})"
 
-    /** Trade a pairing link's one-time code for the app's token (`POST /__app/pair`). */
-    fun pair(link: PairingLink): Answer<Pairing> = exchange("${link.server}/__app/pair") { connection ->
-        connection.requestMethod = "POST"
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/json")
-        val request = JSONObject().put("device", link.device).put("code", link.code).toString()
-        connection.outputStream.use { it.write(request.toByteArray()) }
+    /** Trade a pairing link's one-time code for the app's token (`POST /__app/pair`), as the installation `install`. */
+    fun pair(link: PairingLink, install: String): Answer<Pairing> = exchange("${link.server}/__app/pair") { connection ->
+        send(connection, JSONObject().put("device", link.device).put("code", link.code).put("install", install))
         when (val status = connection.responseCode) {
             HttpURLConnection.HTTP_OK -> {
                 val answer = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
@@ -45,6 +55,45 @@ object Endpoints {
             else -> Answer.Unreachable(answered(status, connection))
         }
     }
+
+    /**
+     * Sign in with `account`'s password and be paired as `phone` (`POST /__app/sign-in`): as the phone
+     * `device` names, the one EiN marked with this installation, or with `create` a new one. EiN
+     * answers which phones to choose from when it cannot tell. The password is sent once and kept by
+     * neither.
+     */
+    fun signIn(account: Account, phone: ThisPhone, device: String?, create: Boolean): Answer<SignedIn> =
+        exchange("${account.server}/__app/sign-in") { connection ->
+            val request = JSONObject()
+                .put("user", account.user)
+                .put("password", account.password)
+                .put("install", phone.install)
+                .put("label", phone.label)
+                .put("manufacturer", phone.manufacturer)
+                .put("model", phone.model)
+            if (device != null) request.put("device", device)
+            if (create) request.put("create", true)
+            send(connection, request)
+            when (val status = connection.responseCode) {
+                HttpURLConnection.HTTP_OK -> {
+                    val answer = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                    Answer.Done(SignedIn.Paired(Pairing(account.server, answer.getString("device"), answer.optString("user"), answer.getString("token"))))
+                }
+                HttpURLConnection.HTTP_CONFLICT -> {
+                    val answer = JSONObject(connection.errorStream.bufferedReader().use { it.readText() })
+                    val phones = answer.getJSONArray("phones")
+                    val choices = (0 until phones.length()).map { at ->
+                        val choice = phones.getJSONObject(at)
+                        PhoneChoice(choice.getString("device"), choice.optString("label", choice.getString("device")), choice.optBoolean("paired"))
+                    }
+                    Answer.Done(SignedIn.Choose(choices, answer.optBoolean("create"), answer.optString("label", phone.label)))
+                }
+                HttpURLConnection.HTTP_BAD_REQUEST, HttpURLConnection.HTTP_FORBIDDEN -> Answer.Refused(reason(connection))
+                // An EiN from before the app could sign in with a password.
+                HttpURLConnection.HTTP_NOT_FOUND, HttpURLConnection.HTTP_BAD_METHOD -> Answer.Refused("it does not take a password from the app yet: pair it by QR code")
+                else -> Answer.Unreachable(answered(status, connection))
+            }
+        }
 
     /** Whether `cookie` still signs in at `server` (`GET /__session`). */
     fun check(server: String, cookie: String?): Answer<SessionCheck> = exchange("$server/__session") { connection ->
@@ -77,6 +126,13 @@ object Endpoints {
             HttpURLConnection.HTTP_FORBIDDEN -> Answer.Refused(reason(connection))
             else -> Answer.Unreachable(answered(status, connection))
         }
+    }
+
+    private fun send(connection: HttpURLConnection, request: JSONObject) {
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.outputStream.use { it.write(request.toString().toByteArray()) }
     }
 
     private fun <T> exchange(url: String, talk: (HttpURLConnection) -> Answer<T>): Answer<T> {

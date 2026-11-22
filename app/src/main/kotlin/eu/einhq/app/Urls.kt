@@ -13,6 +13,16 @@ fun originOf(url: String): String? {
     return "$scheme://$host${if (port != null) ":$port" else ""}"
 }
 
+/**
+ * The origin of the EiN a person typed the address of: `ein.example` is `https://ein.example`, and
+ * a typed `http://` is kept; null when it names no web server.
+ */
+fun serverOf(typed: String): String? {
+    val text = typed.trim()
+    if (text.isEmpty()) return null
+    return originOf(if (Regex("^[A-Za-z][A-Za-z0-9+.-]*://").containsMatchIn(text)) text else "https://$text")
+}
+
 /** Whether `url` is the Web UI's sign-in page on `server`, an origin. */
 fun isSignInPage(url: String, server: String): Boolean =
     originOf(url) == server && runCatching { URI(url).path }.getOrNull() == "/login"
