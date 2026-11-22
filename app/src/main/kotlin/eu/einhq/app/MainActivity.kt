@@ -23,6 +23,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.FrameLayout
@@ -43,6 +44,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebResourceErrorCompat
+import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -77,7 +79,9 @@ import kotlin.coroutines.resume
  * while it is pairing, signing in, or cannot reach EiN. The photo backup (`backup/`) and the
  * position reports (`track/`) run without it; the Web UI's App page sets them up through the bridge,
  * and the activity asks Android for the permissions they need. A page of the paired EiN that asks
- * for the phone's position gets it once the app may know it.
+ * for the phone's position gets it once the app may know it. Pictures, videos and recordings shared
+ * to EiN from another app open the Web UI's `/share` page, which reads them through the bridge
+ * (`SharedFiles`); shared before the app is paired, they wait until it is.
  */
 class MainActivity : AppCompatActivity() {
     private lateinit var store: PairingStore
@@ -90,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private val bridge = Bridge(pairing = { pairing }, unpair = ::unpair, featureCall = ::featureCall)
     private val backup by lazy { BackupBridge(applicationContext) }
     private val tracking by lazy { TrackingBridge(applicationContext) }
+    private val shared by lazy { SharedFiles(contentResolver) }
 
     /** Android's answer to a permission request, for whoever waits for it. */
     private var permissionsAnswered: (() -> Unit)? = null
@@ -142,16 +147,17 @@ class MainActivity : AppCompatActivity() {
             Tracking.apply(this)
         }
 
-        // A link that started the activity is handled once, not again when it is made anew.
+        // A link or a share that started the activity is handled once, not again when it is made anew.
         if (savedInstanceState == null && pairingLinkIn(intent)) return
-        val path = savedInstanceState?.getString(STATE_PATH) ?: intent.getStringExtra(EXTRA_PATH) ?: "/"
+        val sharing = savedInstanceState == null && sharedIn(intent)
+        val path = savedInstanceState?.getString(STATE_PATH) ?: intent.getStringExtra(EXTRA_PATH) ?: if (sharing) SHARE_PATH else "/"
         if (pairing != null) open(path) else askToPair(null)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (pairingLinkIn(intent)) return
-        val path = intent.getStringExtra(EXTRA_PATH)
+        val path = if (sharedIn(intent)) SHARE_PATH else intent.getStringExtra(EXTRA_PATH)
         if (path != null && pairing != null) open(path)
     }
 
@@ -194,6 +200,17 @@ class MainActivity : AppCompatActivity() {
         val link = PairingLink.parse(data.toString())
         if (link == null) askToPair(getString(R.string.not_a_pairing_code)) else confirmPairing(link)
         return true
+    }
+
+    /**
+     * Keep the files `intent` shares to EiN, if it shares any; whether it did. The phone's recent apps
+     * starting the activity again hands it the share it started with, whose files it may no longer read.
+     */
+    private fun sharedIn(intent: Intent?): Boolean {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return false
+        val taken = shared.take(intent)
+        if (taken) intent.action = null
+        return taken
     }
 
     /** The pairing screen, with what went wrong last when something did. */
@@ -249,7 +266,7 @@ class MainActivity : AppCompatActivity() {
                     forget(keepFeatures = same)
                     store.save(paired)
                     pairing = paired
-                    signIn("/")
+                    signIn(if (shared.isEmpty) "/" else SHARE_PATH)
                     if (same) {
                         Backup.schedule(this@MainActivity, restart = false)
                         Tracking.apply(this@MainActivity)
@@ -282,31 +299,52 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Forget the pairing and everything signed in with it: its cookies, the page and its history, and,
-     * unless `keepFeatures`, the photo backup and the position reports.
+     * Forget the pairing and everything signed in with it: its pages (`forgetPages`) and, unless
+     * `keepFeatures`, the photo backup and the position reports.
      */
-    private fun forget(keepFeatures: Boolean = false) {
+    private suspend fun forget(keepFeatures: Boolean = false) {
         if (!keepFeatures) {
             Backup.forget(this)
             Tracking.forget(this)
         }
         store.clear()
         pairing = null
-        CookieManager.getInstance().removeAllCookies(null)
-        web.loadUrl("about:blank")
-        web.clearHistory()
         updateBridge()
+        forgetPages()
     }
 
-    // --- The photo backup and the position reports ---
+    /**
+     * Leave the page, and delete all the WebView keeps of the pages it showed: the cookies, the HTTP
+     * cache and the sites' own storage, the Web UI's service worker and the pages it kept for use
+     * without a connection (ein/core#1522) among it. Returns once they are gone, so that a session
+     * set afterwards stays.
+     */
+    private suspend fun forgetPages() {
+        web.loadUrl("about:blank")
+        web.clearHistory()
+        val storage = WebStorage.getInstance()
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+            suspendCancellableCoroutine { done -> WebStorageCompat.deleteBrowsingData(storage) { done.resume(Unit) } }
+        } else {
+            storage.deleteAllData()
+            web.clearCache(true)
+            suspendCancellableCoroutine { done -> CookieManager.getInstance().removeAllCookies { done.resume(Unit) } }
+        }
+    }
 
-    /** Do a method of the bridge's for the photo backup or the position reports off the main thread, and answer on it. */
+    // --- The photo backup, the position reports and the shared files ---
+
+    /** Do a method of the bridge's for the photo backup, the position reports or the shared files off the main thread, and answer on it. */
     private fun featureCall(method: String, params: JSONObject, answered: (Result<JSONObject>) -> Unit) {
         lifecycleScope.launch {
             answered(
                 runCatching {
                     withContext(Dispatchers.IO) {
-                        if (method in TrackingBridge.METHODS) tracking.call(method, params, ::askTrackingPermissions) else backup.call(method, params, ::askBackupPermissions)
+                        when (method) {
+                            in SharedFiles.METHODS -> shared.call(method, params)
+                            in TrackingBridge.METHODS -> tracking.call(method, params, ::askTrackingPermissions)
+                            else -> backup.call(method, params, ::askBackupPermissions)
+                        }
                     }
                 },
             )
@@ -387,7 +425,11 @@ class MainActivity : AppCompatActivity() {
 
     // --- Signing in ---
 
-    /** Open `path` of the paired EiN, signed in: with the session the WebView has, or a new one. */
+    /**
+     * Open `path` of the paired EiN, signed in: with the session the WebView has, or a new one. Out of
+     * reach, the page is loaded all the same: the Web UI opens what it kept on the phone (its service
+     * worker, ein/core#1522), and without it the page fails to load (`cannotReachUnlessShown`).
+     */
     private fun open(path: String) {
         val paired = pairing ?: return askToPair(null)
         showScreen(busy = true)
@@ -401,7 +443,7 @@ class MainActivity : AppCompatActivity() {
                     signIn(path)
                 }
                 is Answer.Refused -> signIn(path)
-                is Answer.Unreachable -> cannotReach(paired, answer.reason) { open(path) }
+                is Answer.Unreachable -> load(paired, path)
             }
         }
     }
@@ -430,12 +472,16 @@ class MainActivity : AppCompatActivity() {
                     keepCookies(paired.server, answer.value.cookies)
                     load(paired, answer.value.location)
                 }
-                is Answer.Refused -> showScreen(
-                    title = getString(R.string.refused_title),
-                    body = getString(R.string.refused_body, hostOf(paired.server), answer.reason),
-                    primary = getString(R.string.pair_again) to { askToPair(null) },
-                    secondary = getString(R.string.try_again) to { signIn(next) },
-                )
+                is Answer.Refused -> {
+                    // The phone is no longer paired, or its account may not sign in: what it kept goes.
+                    forgetPages()
+                    showScreen(
+                        title = getString(R.string.refused_title),
+                        body = getString(R.string.refused_body, hostOf(paired.server), answer.reason),
+                        primary = getString(R.string.pair_again) to { askToPair(null) },
+                        secondary = getString(R.string.try_again) to { signIn(next) },
+                    )
+                }
                 is Answer.Unreachable -> cannotReach(paired, answer.reason) { signIn(next) }
             }
         }
@@ -454,6 +500,20 @@ class MainActivity : AppCompatActivity() {
         freshStart = true
         showWeb()
         web.loadUrl(if (location.startsWith("/")) paired.server + location else location)
+    }
+
+    /**
+     * Say EiN does not answer once a page of it failed to load, unless the WebView shows one of its
+     * pages all the same after `ERROR_SETTLE_MS`: out of reach, the Web UI's service worker answers
+     * with the page it kept (ein/core#1522), and the WebView still reports the worker's failed try at
+     * the network as the page's own error.
+     */
+    private fun cannotReachUnlessShown(view: WebView, paired: Pairing, reason: String, retry: () -> Unit) {
+        view.postDelayed({
+            view.evaluateJavascript("location.origin") { origin ->
+                if (origin != "\"${paired.server}\"") cannotReach(paired, reason, retry)
+            }
+        }, ERROR_SETTLE_MS)
     }
 
     private fun cannotReach(paired: Pairing, reason: String, retry: () -> Unit) = showScreen(
@@ -587,7 +647,7 @@ class MainActivity : AppCompatActivity() {
             if (!request.isForMainFrame) return
             val reason = if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_RESOURCE_ERROR_GET_DESCRIPTION)) error.description.toString() else ""
             val path = request.url.toString().removePrefix(paired.server).ifEmpty { "/" }
-            cannotReach(paired, reason) { open(path) }
+            cannotReachUnlessShown(view, paired, reason) { open(path) }
         }
 
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
@@ -595,7 +655,7 @@ class MainActivity : AppCompatActivity() {
             // A proxy in front of EiN answers so while EiN is down or starting.
             if (!request.isForMainFrame || response.statusCode !in GATEWAY_ERRORS) return
             val path = request.url.toString().removePrefix(paired.server).ifEmpty { "/" }
-            cannotReach(paired, getString(R.string.unreachable_status, hostOf(paired.server), response.statusCode)) { open(path) }
+            cannotReachUnlessShown(view, paired, getString(R.string.unreachable_status, hostOf(paired.server), response.statusCode)) { open(path) }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -643,9 +703,13 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_PATH = "eu.einhq.app.PATH"
 
         private const val STATE_PATH = "path"
+        /** The Web UI's page that takes files shared to EiN. */
+        private const val SHARE_PATH = "/share"
         /** How soon after a new session the Web UI asking to sign in again means the session does not hold. */
         private const val RETRADE_MS = 15_000L
         private val GATEWAY_ERRORS = setOf(502, 503, 504)
+        /** How long after a page's failed load the WebView is given to show what the Web UI kept instead. */
+        private const val ERROR_SETTLE_MS = 1500L
 
         private fun hostOf(server: String): String = server.toUri().authority ?: server
     }

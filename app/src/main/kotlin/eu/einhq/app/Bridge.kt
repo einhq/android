@@ -20,14 +20,15 @@ import org.json.JSONObject
  *   pairing and asks to be paired again; or answers with why it could not.
  * - `backup`, `backupSet`, `backupAllow` and `backupNow`: the photo backup (`BackupBridge`).
  * - `tracking`, `trackingSet`, `trackingAllow` and `trackingSend`: the position reports (`TrackingBridge`).
+ * - `shared`, `sharedRead` and `sharedDone`: the files shared to EiN through the phone's Share menu (`SharedFiles`).
  */
 class Bridge(
     private val pairing: () -> Pairing?,
     /** Unpair, and say how it went: null once done, or why not; what follows the answer is the caller's. */
     private val unpair: (answered: (String?) -> Unit) -> Unit,
     /**
-     * Run a method of the photo backup or the position reports off the main thread, and answer on it:
-     * their state, or why it failed.
+     * Run a method of the photo backup, the position reports or the shared files off the main thread,
+     * and answer on it: their answer, or why it failed.
      */
     private val featureCall: (method: String, params: JSONObject, answered: (Result<JSONObject>) -> Unit) -> Unit,
 ) : WebViewCompat.WebMessageListener {
@@ -49,7 +50,7 @@ class Bridge(
             "unpair" -> return unpair { problem ->
                 replyProxy.postMessage((if (problem == null) answer.put("result", JSONObject.NULL) else answer.put("error", problem)).toString())
             }
-            in BackupBridge.METHODS, in TrackingBridge.METHODS -> return featureCall(method, call.optJSONObject("params") ?: JSONObject()) { result ->
+            in BackupBridge.METHODS, in TrackingBridge.METHODS, in SharedFiles.METHODS -> return featureCall(method, call.optJSONObject("params") ?: JSONObject()) { result ->
                 result.fold(
                     onSuccess = { answer.put("result", it) },
                     onFailure = { answer.put("error", it.message ?: it.javaClass.simpleName) },

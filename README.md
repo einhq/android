@@ -12,7 +12,9 @@ It is one activity holding a WebView (`app/src/main/kotlin/eu/einhq/app/`):
   `POST /__app/pair`. The token is kept under a key of the phone's keystore and is never backed up.
 - **Signing in.** The app trades the token for a Web UI session at `GET /__app/session`, and does
   so again whenever the Web UI goes to its sign-in page. EiN refusing the token, once the phone is
-  unpaired, asks for a new QR code.
+  unpaired, asks for a new QR code. Unpaired or refused, the app deletes all the WebView kept: its
+  cookies, its cache and the sites' storage, the Web UI's service worker and the pages it kept for
+  use without a connection among them.
 - **The page.** Pages of the paired EiN load in the WebView, any other link in the app that opens
   it, and Android's Back goes through the Web UI's history. A file input offers the phone's files
   and its camera, a download goes to Downloads, and what the page shows full screen is.
@@ -21,9 +23,15 @@ It is one activity holding a WebView (`app/src/main/kotlin/eu/einhq/app/`):
   `{ "id", "error" }`: `info` answers `{ version, server, device, user }`, `unpair` has the
   app take its pairing away at `POST /__app/unpair` with its own token, then forget it, and
   `backup`, `backupSet`, `backupAllow` and `backupNow` read and change the photo backup, and
-  `tracking`, `trackingSet`, `trackingAllow` and `trackingSend` the position reports. The Web UI's
-  App page (`/app`) is built on it. A geolocation request from the paired EiN's pages is answered
-  once the app may know the phone's position.
+  `tracking`, `trackingSet`, `trackingAllow` and `trackingSend` the position reports, and
+  `shared`, `sharedRead` and `sharedDone` hand on the shared files. The Web UI's App page (`/app`)
+  is built on it. A geolocation request from the paired EiN's pages is answered once the app may
+  know the phone's position.
+- **Sharing to EiN** (`SharedFiles.kt`). EiN is in the phone's Share menu for pictures, videos and
+  recordings. The app keeps what is shared to it and opens the Web UI's `/share` page, which lists
+  the files (`shared`), reads each in 3 MB pieces in base64 (`sharedRead`), has the app forget them
+  (`sharedDone`) and opens its Import media dialog with them, as for what Chrome shares to the web
+  app. Shared before the app is paired, they wait until it is.
 - **The photo backup** (`backup/`). WorkManager runs it when MediaStore's photos or videos change,
   every hour, and when asked, on Wi-Fi only or while charging only if so set. It reads the chosen
   folders (`DCIM/Camera/` at first), leaves out what its record (a SQLite table, by MediaStore id

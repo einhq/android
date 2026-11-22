@@ -54,7 +54,7 @@
         tools:targetApi="33">
 
         <!-- One activity, kept across a rotation or a keyboard so the page in the WebView is too;
-             a pairing link from the camera reaches it where it is. -->
+             a pairing link from the camera and a share reach it where it is. -->
         <activity
             android:name=".MainActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
@@ -73,6 +73,16 @@
                 <data
                     android:host="pair"
                     android:scheme="ein" />
+            </intent-filter>
+            <!-- EiN in the phone's Share menu, for pictures, videos and recordings, as the Web UI's
+                 web manifest offers it to Chrome. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
             </intent-filter>
         </activity>
 
