@@ -20,6 +20,10 @@ It is one activity holding a WebView (`app/src/main/kotlin/eu/einhq/app/`):
   unpaired, asks for a new pairing. Unpaired or refused, the app deletes all the WebView kept: its
   cookies, its cache and the sites' storage, the Web UI's service worker and the pages it kept for
   use without a connection among them.
+- **Only https.** A release reaches EiN over https alone: its network security config allows no
+  plain http, and an address or a QR code naming `http://` is refused with what to do. The phone's
+  user-added certificate authorities are trusted, for a household's own. A debug build also reaches
+  `http://`, for an emulator or an EiN on the computer it is built on (`src/debug`).
 - **The page.** Pages of the paired EiN load in the WebView, any other link in the app that opens
   it, and Android's Back goes through the Web UI's history. A file input offers the phone's files
   and its camera, a download goes to Downloads, and what the page shows full screen is.
@@ -76,3 +80,21 @@ the upload key from the repository's secrets, and attaches them to the tag's rel
 
 Locally, a release build is signed when `EIN_UPLOAD_KEYSTORE` names the keystore and
 `EIN_UPLOAD_KEYSTORE_PASSWORD` is its password, and is left unsigned otherwise.
+
+## The store listing
+
+What Google Play shows of the app is in `fastlane/metadata/android/en-GB/`, in the layout fastlane's
+`supply` reads: the title, the short and the full description (`title.txt`,
+`short_description.txt`, `full_description.txt`, plain text with `•` for bullets), and under
+`images/` the 512 × 512 icon, the 1024 × 500 feature graphic and the phone screenshots
+(`phoneScreenshots/1.png` on, 1080 × 1920, in the order Google Play shows them). The Play Console's
+store listing is filled from it, so a change to the listing is made here first. The screenshots show
+EiN's demo archive, the invented Wrenfield family's, as the screenshots on einhq.eu do, and never a
+real household's. Each shows these parts of it:
+
+1. The start page's news: the albums "Christmas in Wellington" and the family's weddings.
+2. A photo of Ruby Wrenfield's from "Christmas in Wellington", with its people and place.
+3. The map of "Erik's archipelago" and "Sailing in the archipelago", in the Stockholm archipelago:
+   Erik's photos there are photos from Wikimedia Commons under CC0, and the tracks between them are
+   generated.
+4. Helen Okafor's page, her albums on a timeline.

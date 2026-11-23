@@ -27,6 +27,13 @@ class UrlsTest {
     }
 
     @Test
+    fun `a release reaches EiN over https only, a debug build over http too`() {
+        assertTrue(reachable("https://ein.example", plainHttp = false))
+        assertFalse(reachable("http://192.168.1.10:8080", plainHttp = false))
+        assertTrue(reachable("http://10.0.2.2:8080", plainHttp = true))
+    }
+
+    @Test
     fun `the sign-in page is the paired server's login and nothing else`() {
         assertTrue(isSignInPage("https://ein.example/login?next=%2Falbums", "https://ein.example"))
         assertTrue(isSignInPage("https://ein.example/login", "https://ein.example"))

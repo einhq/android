@@ -23,6 +23,9 @@ fun serverOf(typed: String): String? {
     return originOf(if (Regex("^[A-Za-z][A-Za-z0-9+.-]*://").containsMatchIn(text)) text else "https://$text")
 }
 
+/** Whether the app may reach the EiN at `server`, an origin: over https, or over http too when `plainHttp`. */
+fun reachable(server: String, plainHttp: Boolean): Boolean = server.startsWith("https://") || plainHttp
+
 /** Whether `url` is the Web UI's sign-in page on `server`, an origin. */
 fun isSignInPage(url: String, server: String): Boolean =
     originOf(url) == server && runCatching { URI(url).path }.getOrNull() == "/login"

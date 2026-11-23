@@ -253,8 +253,12 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton(R.string.cancel, null)
             .create()
         val submit = submit@{
-            val server = serverOf(address.text.toString())
-            addressLayout.error = if (server == null) getString(R.string.not_an_address) else null
+            val server = serverOf(address.text.toString())?.takeIf { reachable(it, BuildConfig.PLAIN_HTTP) }
+            addressLayout.error = when {
+                server != null -> null
+                serverOf(address.text.toString()) == null -> getString(R.string.not_an_address)
+                else -> getString(R.string.https_only)
+            }
             userLayout.error = if (user.text.isNullOrBlank()) getString(R.string.no_username) else null
             if (server == null || user.text.isNullOrBlank()) return@submit
             typedAddress = address.text.toString().trim()
@@ -321,6 +325,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Pair with `link`, once asked whether to when the phone is paired otherwise now. */
     private fun confirmPairing(link: PairingLink) {
+        if (!reachable(link.server, BuildConfig.PLAIN_HTTP)) return askToPair(getString(R.string.pairing_needs_https, hostOf(link.server)))
         val paired = pairing
         if (paired == null || (paired.server == link.server && paired.device == link.device)) return pair(link)
         MaterialAlertDialogBuilder(this)
@@ -461,20 +466,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Ask for what the position reports need, in Android's two steps: the position while the app is
-     * in use, with how the phone moves and a notification; then, once the app has said why, the
+     * Ask for what the position reports need. The app first says why, as Google Play requires before
+     * any of it is asked for, and asks nothing when that is declined; then Android's two steps: the
+     * position while the app is in use, with how the phone moves and a notification; then the
      * position all the time, which Android asks on a page of the phone's settings. Once one of them
      * was refused for good, the app's page in the phone's settings opens instead.
      */
     private suspend fun askTrackingPermissions() = withContext(Dispatchers.Main) {
         val fine = Manifest.permission.ACCESS_FINE_LOCATION
         if (Tracking.access(this@MainActivity) == LocationAccess.NONE && refusedForGood(fine)) return@withContext openAppSettings()
+        if (Tracking.access(this@MainActivity) != LocationAccess.ALWAYS && !discloseBackgroundLocation()) return@withContext
         val wanted = Tracking.foregroundPermissions()
         if (wanted.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
             markAsked(fine)
             ask(wanted)
         }
-        if (Tracking.access(this@MainActivity) != LocationAccess.IN_USE || !discloseBackgroundLocation()) return@withContext
+        if (Tracking.access(this@MainActivity) != LocationAccess.IN_USE) return@withContext
         val background = Manifest.permission.ACCESS_BACKGROUND_LOCATION
         if (refusedForGood(background)) return@withContext openAppSettings()
         markAsked(background)
@@ -482,8 +489,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Say what the app does with the position all the time before Android asks for it, as Google
-     * Play requires; whether the phone's owner chose to go on.
+     * Say what the app does with the position all the time before Android asks for any position, as
+     * Google Play requires; whether the phone's owner chose to go on.
      */
     private suspend fun discloseBackgroundLocation(): Boolean = suspendCancellableCoroutine { done ->
         val option = if (Build.VERSION.SDK_INT >= 30) packageManager.backgroundPermissionOptionLabel else getString(R.string.allow_all_the_time)

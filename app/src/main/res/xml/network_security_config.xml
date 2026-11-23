@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- An EiN is often reached on its home network over plain HTTP, at an address no certificate
-     names, or over HTTPS with a certificate authority of the household's own that the phone was
-     given. The app goes wherever its pairing says, so it allows both. -->
+<!-- The app reaches EiN over https only, so nothing it sends crosses the network unencrypted. An
+     EiN is often behind a proxy with a certificate authority of the household's own that the phone
+     was given (Caddy's tls internal, say), so the phone's user-added authorities are trusted too.
+     A debug build also allows plain http (src/debug). -->
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
-    <base-config
-        cleartextTrafficPermitted="true"
-        tools:ignore="InsecureBaseConfiguration">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates

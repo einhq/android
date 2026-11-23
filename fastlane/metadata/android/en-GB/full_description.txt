@@ -1,0 +1,31 @@
+The app for your own EiN, the family archive and home system a household runs on a machine of its own.
+
+This app needs an EiN installation to sign in to. It does nothing on its own: it is EiN's Web UI in an app, paired with your EiN. If your household has no EiN yet, einhq.eu says what EiN is and how to install it on a Linux computer at home.
+
+What the app does
+
+• Opens your EiN, with the same pages, account and permissions as in a browser on a computer.
+• Pairs once, by scanning a QR code your EiN shows on a computer, or by signing in with your EiN's address, your username and your password. The password is sent once, to pair the phone, and is not kept on it.
+• Backs up the phone's photos and videos into your EiN by itself, from the folders you choose, and only on Wi-Fi or only while charging if you wish. It asks EiN which photos it already has and sends only the others, keeps their names, times and where they were taken, and carries on where it stopped when the connection drops.
+• Reports where the phone is to its track on your EiN while you have it on, at home or away. With the Archive, EiN draws it on its map beside the photos and finds the trips in it. Positions taken without a connection wait on the phone and are sent once it has one.
+• Puts EiN in the phone's Share menu, for pictures, videos and recordings from the gallery or another app.
+• Without a connection, shows the pages you opened recently, as they were then.
+• Offers the phone's camera when you upload, and saves downloads in the phone's Downloads.
+
+Where your data goes
+
+Everything the app reads goes to one place: the EiN you paired it with, which you or your household run. The app reaches it over HTTPS only. The EiN Team runs no server the app talks to and receives none of it. The app has no ads, no analytics and no tracking.
+
+The photo backup and the position reports are off until you turn them on, and each asks for the phone's permission first. Unpairing the app signs it out and forgets what it kept on the phone.
+
+What you need
+
+• An EiN you can reach from the phone at an https:// address, and an account on it.
+• The Archive module on that EiN, for the photo backup and for sharing pictures to it.
+• Android 10 or newer.
+
+About EiN
+
+EiN (Everything is a Node) is a system you host yourself. Everything it keeps is a node in one tree, with an owner and permissions as a file has: photos and albums, people and places, accounts, logs and its own commands. Its Archive module keeps a family's photos, videos, recordings and letters: as files come in, it makes thumbnails, finds faces, reads text, transcribes speech and makes everything searchable, all on the household's own machine.
+
+The guide to the app is at einhq.eu/docs/guide/phone.html, and its source is at github.com/einhq/android.

@@ -40,7 +40,13 @@ android {
     }
 
     buildTypes {
+        // Only a debug build reaches EiN over plain http, for an emulator or an EiN on the computer
+        // it is built on; a release talks to EiN over https alone (its network security config too).
+        debug {
+            buildConfigField("boolean", "PLAIN_HTTP", "true")
+        }
         release {
+            buildConfigField("boolean", "PLAIN_HTTP", "false")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

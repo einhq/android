@@ -9,11 +9,12 @@
 
     <string name="sign_in_title">Sign in to EiN</string>
     <string name="address">EiN\'s address</string>
-    <string name="address_help">Such as ein.example.com: https:// unless you type http://</string>
+    <string name="address_help">Such as ein.example.com, which the app reaches over https://</string>
     <string name="username">Username or e-mail address</string>
     <string name="password">Password</string>
     <string name="sign_in">Sign in</string>
     <string name="not_an_address">That is not a web address.</string>
+    <string name="https_only">The app reaches EiN over https:// only. Type the address EiN answers at with https://.</string>
     <string name="no_username">Type your username.</string>
     <string name="signing_in_to">Signing in to %1$s…</string>
     <string name="sign_in_refused">%1$s did not sign you in: %2$s</string>
@@ -24,6 +25,7 @@
     <string name="back_to_ein">Back to EiN</string>
     <string name="pairing_with">Pairing with %1$s…</string>
     <string name="pairing_refused">%1$s did not take the code: %2$s. Choose Pair again on the phone\'s Info tab for a new one.</string>
+    <string name="pairing_needs_https">The app reaches EiN over https:// only. On the computer, open EiN at its https:// address and choose Pair the app there: this QR code was made at http://%1$s.</string>
     <string name="not_a_pairing_code">That QR code is not an EiN pairing code.</string>
     <string name="scan_failed">The QR code could not be scanned: %1$s</string>
 
@@ -52,7 +54,7 @@
     <string name="tracking_moving">Following the phone as it moves</string>
     <string name="tracking_still">Paused while the phone lies still</string>
     <string name="tracking_disclosure_title">Report your position all the time?</string>
-    <string name="tracking_disclosure_body">While position reports are on, the EiN app collects this phone\'s location and sends it to the phone\'s track on your EiN at %1$s, also when the app is closed or not in use. It is sent nowhere else. On the next page, choose \"%2$s\".</string>
+    <string name="tracking_disclosure_body">While position reports are on, the EiN app collects this phone\'s location and sends it to the phone\'s track on your EiN at %1$s, also when the app is closed or not in use. It is sent nowhere else. Android then asks for the position while the app is in use, and for how the phone moves, and opens a page of its settings: choose \"%2$s\" there.</string>
     <string name="allow_all_the_time">Allow all the time</string>
     <string name="go_on">Continue</string>
     <string name="not_now">Not now</string>
